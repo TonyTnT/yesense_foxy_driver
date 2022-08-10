@@ -1,28 +1,33 @@
-# ROS Driver fo Yesense IMU
+# ROS Foxy Driver fo Yesense IMU
 
 ## Introduction
 
-This is a ros driver for yesense imu sensor.
+This is a ros foxy driver for yesense imu sensor.
+Source Code for ROS1 from https://github.com/HViktorTsoi/yesense_ros_driver
+
 
 ## Install Dependence
 
-Asume that you are using **ROS kinect** 
+Asume that you are using **ROS Foxy** 
 
-```shell
-sudo apt install ros-kinetic-serial-utils ros-kinetic-serial
+```
+cd ros2_ws/src
+git clone https://github.com/RoverRobotics-forks/serial-ros2.git
+cd ..
+colcon build --packages-select serial --symlink-install
 ```
 
 ## Build
 
 ```
-cd yesense_ws/
-catkin_make
+cd src && git clone https://github.com/TonyTnT/yesense_ros2_driver.git
+cd .. && colcon build --packages-select yesense_imu --symlink-install
 ```
 
 ## Usage
 
 ```shell
-roslaunch yesense_imu yesense.launch
+roslaunch yesense_imu yesense_imu.py
 ```
 
 **note: **change the params in launch to your own
