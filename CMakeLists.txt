@@ -1,45 +1,41 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.5)
 project(yesense_imu)
 
-## Find catkin macros and libraries
-## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
-## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  geometry_msgs
-  sensor_msgs
-  serial
-  std_msgs
-  std_srvs
-  tf
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 14)
+endif()
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(serial REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+
+find_file(TF2_CPP_HEADERS
+  NAMES tf2_geometry_msgs.hpp
+  PATHS ${tf2_geometry_msgs_INCLUDE_DIRS}
+  NO_CACHE
+  PATH_SUFFIXES tf2_geometry_msgs
 )
 
+set(dependencies rclcpp sensor_msgs serial std_msgs std_srvs tf2 tf2_geometry_msgs tf2_ros)
 
-###################################
-## catkin specific configuration ##
-###################################
-## The catkin_package macro generates cmake config files for your package
-## Declare things to be passed to dependent projects
-## INCLUDE_DIRS: uncomment this if you package contains header files
-## LIBRARIES: libraries you create in this project that dependent projects also need
-## CATKIN_DEPENDS: catkin_packages dependent projects also need
-## DEPENDS: system dependencies of this project that dependent projects also need
-catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES mpu6050_serial_to_imu
-  CATKIN_DEPENDS roscpp geometry_msgs sensor_msgs serial std_msgs std_srvs tf
-#  DEPENDS system_lib
-)
+ament_package()
 
 ###########
 ## Build ##
 ###########
 
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-# include_directories(include)
 include_directories(
-  ${catkin_INCLUDE_DIRS}
+  include
+  "${PROJECT_SOURCE_DIR}/include"
   ./src
 )
 
@@ -47,30 +43,20 @@ include_directories(
 add_executable(yesense_imu_node src/yesense_imu_node.cpp 
 src/analysis_data.c)
 
-## Specify libraries to link a library or executable target against
-target_link_libraries(yesense_imu_node
-  ${catkin_LIBRARIES}
-)
-
 add_executable(example src/example.c 
 src/analysis_data.c)
+
+## Specify libraries to link a library or executable target against
+ament_target_dependencies(yesense_imu_node ${dependencies})
 
 #############
 ## Install ##
 #############
 
+install(TARGETS yesense_imu_node
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
 
-## Mark executables and/or libraries for installation
-# install(TARGETS yesense_imu_node
-#   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-#   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
-
-# install (DIRECTORY launch
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-# )
-
-# install (DIRECTORY rviz
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-# )
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)

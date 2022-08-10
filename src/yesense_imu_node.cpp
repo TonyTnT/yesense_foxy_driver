@@ -1,237 +1,209 @@
-#include <geometry_msgs/Quaternion.h>
-#include <ros/ros.h>
+#include "rclcpp/rclcpp.hpp"
 #include <serial/serial.h>
-#include <sensor_msgs/Imu.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <sensor_msgs/Temperature.h>
-#include <std_msgs/String.h>
-#include <std_srvs/Empty.h>
-#include <string>
-#include <tf/transform_broadcaster.h>
-#include <tf/transform_datatypes.h>
+#include "tf2/LinearMath/Quaternion.h"
+#ifdef TF2_CPP_HEADERS
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#else
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#endif
+#include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/temperature.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/empty.hpp"
+#include "tf2/transform_datatypes.h"
+#include "tf2_ros/transform_broadcaster.h"
 #include <fstream>
+#include <string>
 
 #include "analysis_data.h"
 
-enum PARSE_STATES {
-	FIND_HEAD_0,
-	FIND_HEAD_1,
-	FIND_LENGTH,
-	FIND_END
-};
+enum PARSE_STATES { FIND_HEAD_0, FIND_HEAD_1, FIND_LENGTH, FIND_END };
 
-sensor_msgs::Imu g_imu;
+sensor_msgs::msg::Imu g_imu;
 
-void publish_imu(const ros::Publisher &imu_pub, const ros::Publisher &imu_pose_pub,
+void publish_imu(const std::shared_ptr<rclcpp::Node> nh,
+                 const rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub,
+                 const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr imu_pose_pub,
                  const protocol_info_t &imu_data) {
-  // publish imu message
-  g_imu.header.stamp = ros::Time::now();
+    // publish imu message
+    auto stamp = nh->get_clock()->now();
+    g_imu.header.stamp = stamp;
 
-  g_imu.orientation = tf::createQuaternionMsgFromRollPitchYaw(
-      imu_data.roll / 180.0 * M_PI, imu_data.pitch / 180.0 * M_PI,
-      imu_data.yaw / 180.0 * M_PI);
-//   std::cout << imu_data.roll << ", " << imu_data.pitch << ", " << imu_data.yaw << ", " << std::endl;
+    tf2::Quaternion tf2_quat;
+    // Create a quaternion from roll/pitch/yaw in radians (0, 0, 0)
+    tf2_quat.setRPY(imu_data.roll / 180.0 * M_PI, imu_data.pitch / 180.0 * M_PI, imu_data.yaw / 180.0 * M_PI);
+    tf2_quat.normalize();
+    g_imu.orientation = tf2::toMsg(tf2_quat);
 
-  g_imu.angular_velocity.x = imu_data.angle_x/180.0*M_PI;
-  g_imu.angular_velocity.y = imu_data.angle_y/180.0*M_PI;
-  g_imu.angular_velocity.z = imu_data.angle_z/180.0*M_PI;
+    g_imu.angular_velocity.x = imu_data.angle_x / 180.0 * M_PI;
+    g_imu.angular_velocity.y = imu_data.angle_y / 180.0 * M_PI;
+    g_imu.angular_velocity.z = imu_data.angle_z / 180.0 * M_PI;
 
-  g_imu.linear_acceleration.x = imu_data.accel_x;
-  g_imu.linear_acceleration.y = imu_data.accel_y;
-  g_imu.linear_acceleration.z = imu_data.accel_z;
+    g_imu.linear_acceleration.x = imu_data.accel_x;
+    g_imu.linear_acceleration.y = imu_data.accel_y;
+    g_imu.linear_acceleration.z = imu_data.accel_z;
 
-  imu_pub.publish(g_imu);
+    imu_pub->publish(g_imu);
 
-  geometry_msgs::PoseStamped pose;
-  pose.header.frame_id = "imu_link";
-  pose.header.stamp = g_imu.header.stamp;
-  pose.pose.position.x = 0.0;
-  pose.pose.position.y = 0.0;
-  pose.pose.position.z = 0.0;
-  pose.pose.orientation.w = g_imu.orientation.w;
-  pose.pose.orientation.x = g_imu.orientation.x;
-  pose.pose.orientation.y = g_imu.orientation.y;
-  pose.pose.orientation.z = g_imu.orientation.z;
-  imu_pose_pub.publish(pose);
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "imu_link";
+    pose.header.stamp = g_imu.header.stamp;
+    pose.pose.position.x = 0.0;
+    pose.pose.position.y = 0.0;
+    pose.pose.position.z = 0.0;
+    pose.pose.orientation.w = g_imu.orientation.w;
+    pose.pose.orientation.x = g_imu.orientation.x;
+    pose.pose.orientation.y = g_imu.orientation.y;
+    pose.pose.orientation.z = g_imu.orientation.z;
+    imu_pose_pub->publish(pose);
 }
 
-int main(int argc, char **argv)
-{
-	serial::Serial ser;
-	std::string port;
-	int baud_rate = 460800;
-	int buf_size = 1000;
-	std::string tf_parent_frame_id;
-	std::string tf_frame_id;
-	std::string frame_id;
-	double time_offset_in_seconds;
-	bool broadcast_tf;
-	double linear_acceleration_stddev;
-	double angular_velocity_stddev;
-	double orientation_stddev;
-	uint8_t last_received_message_number;
-	bool received_message = false;
-	int data_packet_start;
+int main(int argc, char **argv) {
+    serial::Serial ser;
+    std::string port;
+    int baud_rate = 460800;
+    int buf_size = 1000;
+    std::string tf_parent_frame_id;
+    std::string tf_frame_id;
+    std::string frame_id;
+    double time_offset_in_seconds;
+    bool broadcast_tf;
+    double linear_acceleration_stddev;
+    double angular_velocity_stddev;
+    double orientation_stddev;
 
-	tf::Quaternion orientation;
-	tf::Quaternion zero_orientation;
+    tf2::Quaternion orientation;
+    tf2::Quaternion zero_orientation;
 
-	ros::init(argc, argv, "yesense_imu_node");
+    rclcpp::init(argc, argv);
 
-	ros::NodeHandle private_node_handle("~");
-	private_node_handle.param<std::string>("port", port, "/dev/ttyUSB0");
-	private_node_handle.param<int>("baud_rate", baud_rate, 460800);
-	private_node_handle.param<std::string>("tf_parent_frame_id", tf_parent_frame_id, "imu_base");
-	private_node_handle.param<std::string>("tf_frame_id", tf_frame_id, "imu_link");
-	private_node_handle.param<std::string>("frame_id", frame_id, "imu_link");
-	private_node_handle.param<double>("time_offset_in_seconds", time_offset_in_seconds, 0.0);
-	private_node_handle.param<bool>("broadcast_tf", broadcast_tf, true);
-	private_node_handle.param<double>("linear_acceleration_stddev", linear_acceleration_stddev, 0.0);
-	private_node_handle.param<double>("angular_velocity_stddev", angular_velocity_stddev, 0.0);
-	private_node_handle.param<double>("orientation_stddev", orientation_stddev, 0.0);
+    std::shared_ptr<rclcpp::Node> nh = rclcpp::Node::make_shared("imu");
+    port = nh->declare_parameter<std::string>("port", "/dev/ttyUSB0");
+    baud_rate = nh->declare_parameter<int>("baud_rate", 460800);
+    tf_parent_frame_id = nh->declare_parameter<std::string>("tf_parent_frame_id", "imu_base");
+    tf_frame_id = nh->declare_parameter<std::string>("tf_frame_id", "imu_link");
+    frame_id = nh->declare_parameter<std::string>("frame_id", "imu_link");
+    time_offset_in_seconds = nh->declare_parameter<double>("time_offset_in_seconds", 0.0);
+    broadcast_tf = nh->declare_parameter<bool>("broadcast_tf", true);
+    linear_acceleration_stddev = nh->declare_parameter<double>("linear_acceleration_stddev", 0.0);
+    angular_velocity_stddev = nh->declare_parameter<double>("angular_velocity_stddev", 0.0);
+    orientation_stddev = nh->declare_parameter<double>("orientation_stddev", 0.0);
 
-	ros::NodeHandle nh("imu");
-	ros::Publisher imu_pub = nh.advertise<sensor_msgs::Imu>("data", 100);
-	ros::Publisher imu_pose_pub = nh.advertise<geometry_msgs::PoseStamped>("pose", 100);
+    port = nh->get_parameter("port").as_string();
+    baud_rate = nh->get_parameter("baud_rate").as_int();
+    tf_parent_frame_id = nh->get_parameter("tf_parent_frame_id").as_string();
+    tf_frame_id = nh->get_parameter("tf_frame_id").as_string();
+    frame_id = nh->get_parameter("frame_id").as_string();
+    time_offset_in_seconds = nh->get_parameter("time_offset_in_seconds").as_double();
+    broadcast_tf = nh->get_parameter("broadcast_tf").as_bool();
+    linear_acceleration_stddev = nh->get_parameter("linear_acceleration_stddev").as_double();
+    angular_velocity_stddev = nh->get_parameter("angular_velocity_stddev").as_double();
+    orientation_stddev = nh->get_parameter("orientation_stddev").as_double();
 
-	ros::Rate r(200); // 200 hz
+    auto imu_pub = nh->create_publisher<sensor_msgs::msg::Imu>("/imu/data", 100);
+    auto imu_pose_pub = nh->create_publisher<geometry_msgs::msg::PoseStamped>("/imu/pose", 100);
 
-	// sensor_msgs::Imu g_imu;
-	g_imu.header.frame_id = frame_id;
+    rclcpp::Rate r(200); // 200 hz
 
-	g_imu.linear_acceleration_covariance[0] = linear_acceleration_stddev;
-	g_imu.linear_acceleration_covariance[4] = linear_acceleration_stddev;
-	g_imu.linear_acceleration_covariance[8] = linear_acceleration_stddev;
+    g_imu.header.frame_id = frame_id;
+    g_imu.linear_acceleration_covariance[0] = linear_acceleration_stddev;
+    g_imu.linear_acceleration_covariance[4] = linear_acceleration_stddev;
+    g_imu.linear_acceleration_covariance[8] = linear_acceleration_stddev;
 
-	g_imu.angular_velocity_covariance[0] = angular_velocity_stddev;
-	g_imu.angular_velocity_covariance[4] = angular_velocity_stddev;
-	g_imu.angular_velocity_covariance[8] = angular_velocity_stddev;
+    g_imu.angular_velocity_covariance[0] = angular_velocity_stddev;
+    g_imu.angular_velocity_covariance[4] = angular_velocity_stddev;
+    g_imu.angular_velocity_covariance[8] = angular_velocity_stddev;
 
-	g_imu.orientation_covariance[0] = orientation_stddev;
-	g_imu.orientation_covariance[4] = orientation_stddev;
-	g_imu.orientation_covariance[8] = orientation_stddev;
+    g_imu.orientation_covariance[0] = orientation_stddev;
+    g_imu.orientation_covariance[4] = orientation_stddev;
+    g_imu.orientation_covariance[8] = orientation_stddev;
 
-	// std::ofstream fs("/tmp/imu_data.txt");
+    std::string input;
+    std::string read;
+    PARSE_STATES state = FIND_HEAD_0;
+    int data_len = 0;
 
-	std::string input;
-	std::string read;
-	PARSE_STATES state = FIND_HEAD_0;
-	int data_len = 0;
-	int head_ind = 0;
+    while (rclcpp::ok()) {
+        try {
+            if (ser.isOpen()) {
+                // read string from serial device
+                if (ser.available()) {
+                    read = ser.read(ser.available());
 
-	while (ros::ok())
-	{
-		try
-		{
-			if (ser.isOpen())
-			{
-				// read string from serial device
-				if (ser.available())
-				{
-					read = ser.read(ser.available());
-					// char log_data[1024] = {0};
-					// for (unsigned int i = 0; i < read.size(); i++)
-					// {
-					// 	char tmp[16] = {0};
-					// 	sprintf(tmp, "%02X ", (unsigned char)read.at(i));
-					// 	strcat(log_data, tmp);
-					// }
-					// fs << log_data;
-					// fs.flush();
+                    if (input.size() > buf_size) {
+                        RCLCPP_WARN(nh->get_logger(), "input.size() > buf_size: %ld/%d", input.size(), buf_size);
+                        input.clear();
+                        state = FIND_HEAD_0;
+                    }
 
-					if (input.size() > buf_size)
-					{
-						ROS_WARN("input.size() > buf_size: %ld/%d", input.size(), buf_size);
-						input.clear();
-						state = FIND_HEAD_0;
-					}
+                    for (unsigned int i = 0; i < read.size(); i++) {
+                        if (state == FIND_HEAD_0) {
+                            if (read.at(i) == (char)(0x59)) {
+                                input.clear();
+                                input += read.at(i);
+                                state = FIND_HEAD_1;
+                            }
+                        } else if (state == FIND_HEAD_1) {
+                            if (read.at(i) == (char)(0x53)) {
+                                input += read.at(i);
+                                state = FIND_LENGTH;
+                            } else {
+                                state = FIND_HEAD_0;
+                            }
+                        } else if (state == FIND_LENGTH) {
+                            input += read.at(i);
+                            if (input.size() > 7) {
+                                unsigned char *len = (unsigned char *)input.data() + 4;
+                                data_len = *len;
+                                data_len += 7;
+                                state = FIND_END;
+                            }
+                        } else if (state == FIND_END) {
+                            input += read.at(i);
+                            if (input.size() >= data_len) {
+                                std::string sentence = input; // input.substr(0, data_len);
+                                int e = analysis_data((unsigned char *)sentence.data(), sentence.size());
+                                if (e != analysis_ok) {
+                                    RCLCPP_WARN(nh->get_logger(), "analysis_data() FAILED!!!! %d", e);
+                                    for (unsigned int i = 0; i < sentence.size(); i++) {
+                                        char aaa[1024] = {0};
+                                        sprintf(aaa, "%02X ", (unsigned char)sentence.at(i));
+                                        std::cout << aaa;
+                                    }
+                                    std::cout << "data len: " << data_len << std::endl;
+                                } else {
+                                    publish_imu(nh, imu_pub, imu_pose_pub, g_output_info);
+                                }
 
-					for (unsigned int i = 0; i < read.size(); i++) {
-						if (state == FIND_HEAD_0) {
-							if (read.at(i) == (char)(0x59)) {
-								input.clear();
-								input += read.at(i);
-								state = FIND_HEAD_1;
-							}
-						} else if (state == FIND_HEAD_1) {
-							if (read.at(i) == (char)(0x53)) {
-								input += read.at(i);
-								state = FIND_LENGTH;
-							} else {
-								state = FIND_HEAD_0;
-							}
-						} else if (state == FIND_LENGTH) {
-							input += read.at(i);
-							if (input.size() > 7)
-							{
-								unsigned char *len = (unsigned char *)input.data() + 4;
-								data_len = *len;
-								data_len += 7;
-								state = FIND_END;
-							}
-						} else if (state == FIND_END) {
-							input += read.at(i);
-							if (input.size() >= data_len)
-							{
-								std::string sentence = input;//input.substr(0, data_len);
-								// input = input.substr(data_len);
-								// process sentense
-								// ...
-								int e = analysis_data((unsigned char*)sentence.data(), sentence.size());
-								if (e != analysis_ok)
-								{
-									ROS_WARN("analysis_data() FAILED!!!! %d", e);
-									for (unsigned int i = 0; i < sentence.size(); i++)
-									{
-										char aaa[1024] = {0};
-										sprintf(aaa, "%02X ", (unsigned char)sentence.at(i));
-										std::cout << aaa;
-									}
-									std::cout << "data len: " << data_len << std::endl;
-								}
-								else
-								{
-									publish_imu(imu_pub, imu_pose_pub, g_output_info);
-								}
-								
-								state = FIND_HEAD_0;
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				// try and open the serial port
-				try
-				{
-					ROS_INFO("port:%s, rate:%d", port.c_str(), baud_rate);
-					ser.setPort(port);
-					ser.setBaudrate(baud_rate);
-					serial::Timeout to = serial::Timeout::simpleTimeout(1000);
-					ser.setTimeout(to);
-					ser.open();
-				}
-				catch (serial::IOException &e)
-				{
-					ROS_ERROR_STREAM("Unable to open serial port " << ser.getPort() << ". Trying again in 5 seconds.");
-					ros::Duration(5).sleep();
-				}
+                                state = FIND_HEAD_0;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // try and open the serial port
+                try {
+                    RCLCPP_INFO(nh->get_logger(), "port:%s, rate:%d", port.c_str(), baud_rate);
+                    ser.setPort(port);
+                    ser.setBaudrate(baud_rate);
+                    serial::Timeout to = serial::Timeout::simpleTimeout(1000);
+                    ser.setTimeout(to);
+                    ser.open();
+                } catch (serial::IOException &e) {
+                    RCLCPP_INFO(nh->get_logger(), "Unable to open serial port %d. Trying again in 5 seconds.",
+                                ser.getPort());
+                    rclcpp::sleep_for(std::chrono::seconds(5));
+                }
 
-				if (ser.isOpen())
-				{
-					ROS_DEBUG_STREAM("Serial port " << ser.getPort() << " initialized and opened.");
-				}
-			}
-		}
-		catch (serial::IOException &e)
-		{
-			ROS_ERROR_STREAM("Error reading from the serial port " << ser.getPort() << ". Closing connection.");
-			ser.close();
-		}
-		ros::spinOnce();
-		r.sleep();
-	}
-
-	// fs.close();
+                if (ser.isOpen()) {
+                    RCLCPP_DEBUG(nh->get_logger(), "Serial port %d initialized and opened.", ser.getPort());
+                }
+            }
+        } catch (serial::IOException &e) {
+            RCLCPP_ERROR(nh->get_logger(), "Error reading from the serial port %d. Closing connection.", ser.getPort());
+            ser.close();
+        }
+        rclcpp::spin_some(nh);
+        r.sleep();
+    }
 }
